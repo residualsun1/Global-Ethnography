@@ -3,6 +3,7 @@ import { BookOpen, CalendarRange, ChevronRight, Download, FileText, Globe2, Imag
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArchiveBackupError, MAX_ARCHIVE_IMPORT_BYTES, parseArchiveBackup, serializeArchiveBackup } from './archiveBackup';
+import { ARCHIVE_IMAGE_ACCEPT, ArchiveMediaError, MAX_MARKDOWN_NOTE_BYTES, normalizeHttpsImageUrl, validateArchiveImageFile } from './archiveMedia';
 import { LocalArchiveRepository } from './archiveRepository';
 import { archivePlaceRoute } from './archiveHierarchy';
 import { isPublicDemoArchive, PUBLIC_DEMO_ARCHIVES } from './demoArchives';
@@ -545,28 +546,48 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
-function ImageInput({ label, uploadLabel, value, onChange }: {
+function ImageInput({ label, uploadLabel, value, onChange, onError }: {
   label: string;
   uploadLabel: string;
   value: ArchiveImage | undefined;
   onChange: (image: ArchiveImage | undefined) => void;
+  onError: (message: string) => void;
 }) {
   return <div className="image-source">
-    <label><span>{label}</span><input type="url" placeholder="https://cdn.jsdelivr.net/..." onChange={event => onChange(event.currentTarget.value.trim() ? { type: 'url', url: event.currentTarget.value.trim() } : undefined)} /></label>
-    <label className="file-picker"><ImageIcon size={17} /><span>{uploadLabel}</span><input type="file" accept="image/*" onChange={event => {
+    <label><span>{label}</span><input type="url" placeholder="https://cdn.jsdelivr.net/..." defaultValue={value?.type === 'url' ? value.url : ''} onBlur={event => {
+      const raw = event.currentTarget.value.trim();
+      if (!raw) {
+        onChange(undefined);
+        return;
+      }
+      try {
+        onChange({ type: 'url', url: normalizeHttpsImageUrl(raw) });
+      } catch (error) {
+        event.currentTarget.value = value?.type === 'url' ? value.url ?? '' : '';
+        onError(error instanceof ArchiveMediaError ? error.message : '图片网址无效');
+      }
+    }} /></label>
+    <label className="file-picker"><ImageIcon size={17} /><span>{uploadLabel}</span><input type="file" accept={ARCHIVE_IMAGE_ACCEPT} onChange={event => {
       const file = event.currentTarget.files?.[0];
       if (!file) return;
-      void readFileAsDataUrl(file).then(dataUrl => onChange({ type: 'local', dataUrl, name: file.name }));
+      try {
+        validateArchiveImageFile(file);
+        void readFileAsDataUrl(file).then(dataUrl => onChange({ type: 'local', dataUrl, name: file.name }));
+      } catch (error) {
+        event.currentTarget.value = '';
+        onError(error instanceof ArchiveMediaError ? error.message : '图片无法读取');
+      }
     }} /></label>
     {value && <small>已选择：{value.type === 'url' ? value.url : value.name}</small>}
   </div>;
 }
 
-function ArchiveForm({ place, archive, onSubmit, onCancel }: {
+function ArchiveForm({ place, archive, onSubmit, onCancel, onError }: {
   place: PlaceSnapshot;
   archive?: EthnographyArchive;
   onSubmit: (archive: Omit<EthnographyArchive, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus'>) => Promise<void>;
   onCancel: () => void;
+  onError: (message: string) => void;
 }) {
   const storedOriginal = archive ? originalEdition(archive) : undefined;
   const storedChinese = archive ? chineseEdition(archive) : undefined;
@@ -638,7 +659,7 @@ function ArchiveForm({ place, archive, onSubmit, onCancel }: {
     <section className="edition-form-section"><header><span className="eyebrow">ORIGINAL EDITION</span><strong>原始版本</strong></header>
     <label><span>原文书名 *</span><input name="title" required autoFocus defaultValue={storedOriginal?.title ?? archive?.title} /></label>
     <div className="form-grid"><label><span>原文语言</span><input name="originalLanguage" placeholder="如 en, fr, ja" defaultValue={storedOriginal?.languageCode === 'und' ? '' : storedOriginal?.languageCode} /></label><label><span>ISBN</span><input name="originalIsbn" defaultValue={storedOriginal?.isbn} /></label></div>
-    <ImageInput label="原版封面 URL" uploadLabel="上传原版封面" value={bookCover} onChange={setBookCover} />
+    <ImageInput label="原版封面 URL" uploadLabel="上传原版封面" value={bookCover} onChange={setBookCover} onError={onError} />
     </section>
     <label><span>田野地点 *</span><input name="locationName" required defaultValue={archive?.locationName ?? place.name} /></label>
     <div className="contributor-editor">
@@ -656,7 +677,7 @@ function ArchiveForm({ place, archive, onSubmit, onCancel }: {
       </fieldset>)}
       <button type="button" className="add-contributor" onClick={addContributor}>添加作者</button>
     </div>
-    <ImageInput label="作者图像 URL" uploadLabel="上传本地作者图像" value={authorImage} onChange={setAuthorImage} />
+    <ImageInput label="作者图像 URL" uploadLabel="上传本地作者图像" value={authorImage} onChange={setAuthorImage} onError={onError} />
     <div className="form-grid">
       <label><span>首次出版日期</span><input name="publishedDate" placeholder="2003-04-20 / 2003-04 / 2003" defaultValue={storedOriginal?.publishedDate ?? archive?.publishedDate} /></label>
       <label><span>原版出版社</span><input name="publisher" defaultValue={storedOriginal?.publisher ?? archive?.publisher} /></label>
@@ -668,13 +689,18 @@ function ArchiveForm({ place, archive, onSubmit, onCancel }: {
       <label><span>中文书名</span><input name="chineseTitle" defaultValue={storedChinese?.title} placeholder="填写后启用中文版本" /></label>
       <label><span>译者</span><input name="chineseTranslators" placeholder="多位译者请用英文逗号 , 分隔" defaultValue={(storedChinese?.translators ?? archive?.translators ?? []).join(', ')} /></label>
       <div className="form-grid"><label><span>中文出版日期</span><input name="chinesePublishedDate" placeholder="2003-04-20 / 2003-04 / 2003" defaultValue={storedChinese?.publishedDate} /></label><label><span>中文出版社</span><input name="chinesePublisher" defaultValue={storedChinese?.publisher} /></label><label><span>中文 ISBN</span><input name="chineseIsbn" defaultValue={storedChinese?.isbn} /></label></div>
-      <ImageInput label="中文版封面 URL" uploadLabel="上传中文版封面" value={chineseBookCover} onChange={setChineseBookCover} />
+      <ImageInput label="中文版封面 URL" uploadLabel="上传中文版封面" value={chineseBookCover} onChange={setChineseBookCover} onError={onError} />
       <label><span>中文版简介</span><textarea name="chineseSummary" rows={4} defaultValue={storedChinese?.summary} /></label>
     </section>
     <div className="image-source">
       <label className="file-picker"><FileText size={17} /><span>上传 Markdown 阅读札记</span><input type="file" accept=".md,text/markdown,text/plain" onChange={event => {
         const file = event.currentTarget.files?.[0];
         if (!file) return;
+        if (file.size > MAX_MARKDOWN_NOTE_BYTES) {
+          event.currentTarget.value = '';
+          onError('Markdown 阅读札记不能超过 2 MB');
+          return;
+        }
         void readFileAsText(file).then(content => setNote({ fileName: file.name, content, uploadedAt: new Date().toISOString() }));
       }} /></label>
       {note && <small>已上传：{note.fileName}</small>}
@@ -749,7 +775,7 @@ function ArchiveNote({ archive }: { archive: EthnographyArchive }) {
   </article>;
 }
 
-function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, onMode, onRemove, onTrace }: {
+function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, onMode, onRemove, onTrace, onError }: {
   state: ArchiveModalState | null;
   archives: EthnographyArchive[];
   onClose: () => void;
@@ -759,6 +785,7 @@ function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, on
   onMode: (mode: ArchiveModalState['mode']) => void;
   onRemove: (archive: EthnographyArchive) => void;
   onTrace: (author: ArchiveAuthor) => void;
+  onError: (message: string) => void;
 }) {
   if (!state) return null;
   const placeArchives = archives.filter(archive => archive.placeId === state.place.id);
@@ -768,11 +795,11 @@ function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, on
       <button className="icon-button archive-close" onClick={onClose} aria-label="关闭民族志档案"><X size={19} /></button>
       {state.mode === 'form' && <>
         <header className="archive-modal-header"><span className="eyebrow">NEW ETHNOGRAPHY</span><h2>新建民族志档案</h2><p>{state.place.parents.concat(state.place.name).filter(Boolean).join(' / ')}</p></header>
-        <ArchiveForm place={state.place} onSubmit={onCreate} onCancel={onClose} />
+        <ArchiveForm place={state.place} onSubmit={onCreate} onCancel={onClose} onError={onError} />
       </>}
       {state.mode === 'edit' && <>
         <header className="archive-modal-header"><span className="eyebrow">EDIT ETHNOGRAPHY</span><h2>重新编辑民族志档案</h2><p>{state.place.parents.concat(state.place.name).filter(Boolean).join(' / ')}</p></header>
-        <ArchiveForm place={state.place} archive={state.archive} onSubmit={input => onUpdate(state.archive, input)} onCancel={() => onMode('detail')} />
+        <ArchiveForm place={state.place} archive={state.archive} onSubmit={input => onUpdate(state.archive, input)} onCancel={() => onMode('detail')} onError={onError} />
       </>}
       {state.mode === 'list' && <>
         <header className="archive-modal-header"><span className="eyebrow">PLACE ARCHIVES</span><h2>{state.place.name}</h2><p>{state.place.parents.join(' / ')}</p></header>
@@ -1123,7 +1150,7 @@ export default function App({ repository: injectedRepository }: { repository?: A
     <ThemeLayerPanel open={themeOpen} tags={themeTags} selected={selectedTags} onToggle={key => setSelectedTags(current => current.includes(key) ? current.filter(tag => tag !== key) : [...current, key])} onClear={() => setSelectedTags([])} onClose={() => setThemeOpen(false)} />
     {hoverArchiveLocation && hoverArchives.length > 0 && !modalOpen && <HoverArchiveShelf location={hoverArchiveLocation} archives={hoverArchives} onOpen={archive => { clearHoverShelf(false); openArchive(archive); }} onEnter={keepHoverShelf} onLeave={() => clearHoverShelf()} />}
     <div className={`scrim ${modalOpen ? 'is-visible' : ''}`} onClick={() => setArchiveModal(null)} />
-    <ArchiveModal state={archiveModal} archives={archives} onClose={() => setArchiveModal(null)} onCreate={createArchive} onUpdate={updateArchive} onOpen={openArchive} onMode={setModalMode} onRemove={archive => void removeArchive(archive)} onTrace={author => void showAuthorTrajectory(author)} />
+    <ArchiveModal state={archiveModal} archives={archives} onClose={() => setArchiveModal(null)} onCreate={createArchive} onUpdate={updateArchive} onOpen={openArchive} onMode={setModalMode} onRemove={archive => void removeArchive(archive)} onTrace={author => void showAuthorTrajectory(author)} onError={setToast} />
     <div className={`toast ${toast ? 'is-visible' : ''}`} role="status">{toast}</div>
   </main>;
 }

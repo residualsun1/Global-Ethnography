@@ -1,33 +1,82 @@
-# 世界民族志地图
+# 民族志数据档案
 
-Radio Garden 风格的交互式矢量地球：拖动旋转、滚动或双指缩放；按缩放层级显示国家、省州、岛屿、区县、城市、城镇与村庄。点击可见地名后可选择“标记此地”或“继续深入”，标记以赤陶色同心圆呈现。项目不包含电台功能，所有点位默认保存在浏览器本地。
+![民族志数据档案](./public/og.png)
 
-当前视觉方向采用“博物馆档案馆为框架、私人学者田野手记为细节”：深棕绿星空、低饱和旧地图地球、赤陶色同心圆标记，以及带纸张纹理、档案编号和经纬度的地点抽屉。
+一个以交互式地球与平面地图为入口的民族志个人知识档案。项目将作品、作者、田野地点、研究时间、研究轨迹和主题标签组织在同一套可视化界面中。
 
-## 启动
+## 主要能力
+
+- 在 3D 地球与 2D 地图之间切换，浏览国家、省州和地点。
+- 按地点建立民族志档案，记录版本、作者、田野时间、出版信息、标签和 Markdown 阅读札记。
+- 按研究者、国籍、时间和主题查看档案之间的关系。
+- 私人档案保存在当前浏览器的 IndexedDB 中，不会自动上传。
+- 支持 JSON 导出、合并导入、覆盖恢复以及清空前备份提醒。
+- 首次访问会显示一份只读公开演示档案；演示数据与私人档案完全分离。
+
+## 技术架构
+
+| 层级 | 实现 |
+| --- | --- |
+| 应用 | React 19、TypeScript、Vite |
+| 地图 | MapLibre GL JS，支持 Globe 与平面投影 |
+| 本地持久化 | Dexie / IndexedDB |
+| 地理数据 | Natural Earth、本地城市索引、OpenStreetMap / OpenFreeMap |
+| 测试 | Vitest、Playwright |
+| 部署形态 | 无服务器静态站点 |
+
+运行时只有地图样式和瓦片依赖网络。档案数据默认不经过服务器，因此不同设备、浏览器配置或网站域名之间不会自动同步。
+
+## 本地开发
+
+需要 Node.js 22 和 npm 10 或更高版本。
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-生产构建与测试：
+常用检查：
 
 ```bash
-npm test
 npm run build
+npm test
 npm run test:e2e
+npm run check
 ```
 
-E2E 默认复用 Windows 上的 Microsoft Edge，覆盖 1440×900 桌面端和 Pixel 7 移动端视口。
+端到端测试覆盖 1440×900 桌面视口与 Pixel 7 移动视口，包括地图视图切换、研究工具、演示档案和 JSON 备份恢复流程。
 
-## 数据与扩展
+## 数据与隐私
 
-- 国家及省州基础数据来自 Natural Earth，运行时地点标签来自 OpenStreetMap 矢量瓦片。优先采用数据内可靠的简体中文名称；繁体中文通过 OpenCC 转为简体，无法可靠转换的外文名称保留原名，不自动编造译名。
-- 地球使用本地 MapLibre GL JS Globe 渲染器，并在运行时从 OpenFreeMap 读取 OpenStreetMap 矢量瓦片；页面需要网络连接才能显示完整底图。
-- 矢量样式保留主要道路、水系和行政信息，隐藏建筑、门牌、POI 与社区级道路。
-- 产品数据口径将台湾作为中国的省级行政区，层级统一为“中国 → 台湾省 → 下属地点”。
-- 国家数据在首屏加载，省州数据按国家延迟加载，避免一次下载完整全球边界。
-- 如需重新生成地理数据：`node scripts/process-geography.mjs <countries.geojson> <admin1.geojson> <places.geojson>`。
-- 点位通过 `PointRepository` 访问；未来接入云端时可替换 `LocalPointRepository`，无需修改 3D 场景。
-- 第三方素材与许可证说明见 `public/THIRD_PARTY_NOTICES.md`。
+- 公开演示内容位于 `src/demoArchives.ts`，应只包含经过核查、脱敏且版权明确的资料。
+- 用户自行录入的档案位于浏览器 IndexedDB 数据库 `world-ethnographic-archive`。
+- 清除浏览器网站数据、改用其他浏览器配置或改变访问域名，都可能使原有本地档案不可见。
+- 重要档案应定期导出为 JSON，并将备份文件保存在浏览器之外。
+- 本地上传的封面和作者图片会以 Data URL 写入 IndexedDB，建议控制图片体积。
+
+## 地理数据口径
+
+- 国家和省州基础边界来自 Natural Earth，运行时地图标签与瓦片来自 OpenStreetMap / OpenFreeMap。
+- 优先使用数据源中的可靠简体中文名称；繁体中文通过 OpenCC 转换，无法可靠转换的外文名称保留原名。
+- 国家数据随首屏加载，省州数据按国家延迟加载。
+- 地理数据处理脚本：
+
+```bash
+node scripts/process-geography.mjs <countries.geojson> <admin1.geojson> <places.geojson>
+```
+
+地图和第三方素材的来源、版权及许可证信息见 [`public/THIRD_PARTY_NOTICES.md`](./public/THIRD_PARTY_NOTICES.md)。
+
+## 部署
+
+项目构建后生成 `dist` 目录，可部署到 Cloudflare Pages、Vercel、Netlify 或其他静态托管服务。
+
+推荐配置：
+
+```text
+Build command: npm run build
+Output directory: dist
+Node version: 22
+```
+
+生产环境应保留 `public/_headers` 中的安全响应头，并在获得正式域名后将 Open Graph 图片地址更新为绝对 HTTPS 地址。

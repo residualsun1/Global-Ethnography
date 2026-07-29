@@ -1,5 +1,5 @@
 {
-  "name": "radio-garden-globe",
+  "name": "ethnographic-world-archive",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -9,7 +9,12 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "check": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=22 <25",
+    "npm": ">=10"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
@@ -32,6 +37,7 @@
     "@types/three": "^0.181.0",
     "@vitejs/plugin-react": "^5.1.1",
     "jsdom": "^27.3.0",
+    "postcss": "^8.5.25",
     "typescript": "~5.9.3",
     "vite": "^7.2.4",
     "vitest": "^4.0.15"
