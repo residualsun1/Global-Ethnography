@@ -17,16 +17,13 @@
     "npm": ">=10"
   },
   "dependencies": {
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.4.0",
     "dexie": "^4.4.4",
     "lucide-react": "^0.468.0",
     "opencc-js": "^1.4.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "three": "^0.181.0"
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
@@ -34,7 +31,6 @@
     "@testing-library/react": "^16.3.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.181.0",
     "@vitejs/plugin-react": "^5.1.1",
     "jsdom": "^27.3.0",
     "postcss": "^8.5.25",

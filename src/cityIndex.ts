@@ -1,12 +1,11 @@
-import * as THREE from 'three';
-import { latLonToVector3 } from './geo';
+import { latLonToVector3, normalizeVector3, squaredVectorDistance, type Cartesian3 } from './geo';
 import type { City } from './types';
 
-interface CityNode { city: City; point: THREE.Vector3; axis: 0 | 1 | 2; left?: CityNode; right?: CityNode }
+interface CityNode { city: City; point: Cartesian3; axis: 0 | 1 | 2; left?: CityNode; right?: CityNode }
 
-const valueAt = (v: THREE.Vector3, axis: number) => axis === 0 ? v.x : axis === 1 ? v.y : v.z;
+const valueAt = (v: Cartesian3, axis: number) => axis === 0 ? v.x : axis === 1 ? v.y : v.z;
 
-function build(items: Array<{ city: City; point: THREE.Vector3 }>, depth = 0): CityNode | undefined {
+function build(items: Array<{ city: City; point: Cartesian3 }>, depth = 0): CityNode | undefined {
   if (!items.length) return undefined;
   const axis = (depth % 3) as 0 | 1 | 2;
   items.sort((a, b) => valueAt(a.point, axis) - valueAt(b.point, axis));
@@ -18,12 +17,12 @@ export class CityIndex {
   private readonly root?: CityNode;
   constructor(cities: City[]) { this.root = build(cities.map(city => ({ city, point: latLonToVector3(city.latitude, city.longitude) }))); }
 
-  nearest(target: THREE.Vector3, count = 8): City[] {
-    const query = target.clone().normalize();
+  nearest(target: Cartesian3, count = 8): City[] {
+    const query = normalizeVector3(target);
     const best: Array<{ distance: number; city: City }> = [];
     const visit = (node?: CityNode) => {
       if (!node) return;
-      const distance = node.point.distanceToSquared(query);
+      const distance = squaredVectorDistance(node.point, query);
       best.push({ distance, city: node.city });
       best.sort((a, b) => a.distance - b.distance);
       if (best.length > count) best.pop();

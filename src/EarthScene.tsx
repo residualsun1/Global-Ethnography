@@ -331,7 +331,8 @@ export function EarthScene({ points, archivedPlaceIds, nationalityCountryCodes, 
     const level = levelFromZoom(map.getZoom());
     let regions = geography.lookup(latitude, longitude);
     if (!regions.country) return null;
-    const position = latLonToVector3(latitude, longitude, EARTH_RADIUS).toArray() as [number, number, number];
+    const cartesian = latLonToVector3(latitude, longitude, EARTH_RADIUS);
+    const position: [number, number, number] = [cartesian.x, cartesian.y, cartesian.z];
     if (level === 'city') {
       const city = nearestCity(map, longitude, latitude, x, y);
       if (city) {

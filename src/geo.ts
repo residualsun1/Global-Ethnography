@@ -1,23 +1,40 @@
-import * as THREE from 'three';
-
 export const EARTH_RADIUS = 2;
 
-export function latLonToVector3(latitude: number, longitude: number, radius = 1): THREE.Vector3 {
-  const lat = THREE.MathUtils.degToRad(latitude);
-  const lon = THREE.MathUtils.degToRad(longitude);
-  const cosLat = Math.cos(lat);
-  return new THREE.Vector3(
-    radius * cosLat * Math.cos(lon),
-    radius * Math.sin(lat),
-    -radius * cosLat * Math.sin(lon)
-  );
+export interface Cartesian3 {
+  x: number;
+  y: number;
+  z: number;
 }
 
-export function vector3ToLatLon(vector: THREE.Vector3) {
-  const unit = vector.clone().normalize();
+const degreesToRadians = (degrees: number) => degrees * Math.PI / 180;
+const radiansToDegrees = (radians: number) => radians * 180 / Math.PI;
+
+export function latLonToVector3(latitude: number, longitude: number, radius = 1): Cartesian3 {
+  const lat = degreesToRadians(latitude);
+  const lon = degreesToRadians(longitude);
+  const cosLat = Math.cos(lat);
   return {
-    latitude: THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(unit.y, -1, 1))),
-    longitude: THREE.MathUtils.radToDeg(Math.atan2(-unit.z, unit.x))
+    x: radius * cosLat * Math.cos(lon),
+    y: radius * Math.sin(lat),
+    z: -radius * cosLat * Math.sin(lon)
+  };
+}
+
+export function normalizeVector3(vector: Cartesian3): Cartesian3 {
+  const length = Math.hypot(vector.x, vector.y, vector.z);
+  if (length === 0) return { x: 0, y: 0, z: 0 };
+  return { x: vector.x / length, y: vector.y / length, z: vector.z / length };
+}
+
+export function squaredVectorDistance(a: Cartesian3, b: Cartesian3) {
+  return (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
+}
+
+export function vector3ToLatLon(vector: Cartesian3) {
+  const unit = normalizeVector3(vector);
+  return {
+    latitude: radiansToDegrees(Math.asin(Math.max(-1, Math.min(1, unit.y)))),
+    longitude: radiansToDegrees(Math.atan2(-unit.z, unit.x))
   };
 }
 

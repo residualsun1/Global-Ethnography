@@ -127,13 +127,6 @@ export interface EthnographyArchive {
   syncStatus: SyncStatus;
 }
 
-export interface PointRepository {
-  list(): Promise<SavedPoint[]>;
-  create(place: Place): Promise<SavedPoint>;
-  remove(id: string): Promise<void>;
-  clear(): Promise<void>;
-}
-
 export interface ArchiveRepository {
   list(): Promise<EthnographyArchive[]>;
   listByPlace(placeId: string): Promise<EthnographyArchive[]>;
