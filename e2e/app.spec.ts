@@ -77,7 +77,9 @@ test('imports, exports and clears private archives without removing the public d
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^ethnographic-archives-\d{4}-\d{2}-\d{2}\.json$/);
 
-  page.on('dialog', dialog => void dialog.accept());
+  page.on('dialog', async dialog => {
+    await dialog.accept();
+  });
   await page.getByRole('button', { name: '清空私人档案' }).click();
   await expect(page.locator('.archive-index-panel')).not.toHaveClass(/is-open/);
   await page.getByRole('button', { name: '打开地点档案' }).click();
