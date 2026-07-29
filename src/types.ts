@@ -140,6 +140,7 @@ export interface ArchiveRepository {
   create(input: Omit<EthnographyArchive, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus'>): Promise<EthnographyArchive>;
   update(id: string, input: Partial<Omit<EthnographyArchive, 'id' | 'createdAt'>>): Promise<EthnographyArchive>;
   remove(id: string): Promise<void>;
+  restore(archives: EthnographyArchive[], mode: 'merge' | 'replace'): Promise<number>;
   clear(): Promise<void>;
 }
 

@@ -83,6 +83,30 @@ export class LocalArchiveRepository implements ArchiveRepository {
     await this.db.archives.delete(id);
   }
 
+  async restore(archives: EthnographyArchive[], mode: 'merge' | 'replace') {
+    const normalized = archives.map(archive => normalizeArchive({
+      ...structuredClone(archive),
+      syncStatus: 'local'
+    }));
+    let restoredCount = 0;
+    await this.db.transaction('rw', this.db.archives, async () => {
+      if (mode === 'replace') {
+        await this.db.archives.clear();
+        await this.db.archives.bulkPut(normalized);
+        restoredCount = normalized.length;
+        return;
+      }
+      const existing = await this.db.archives.bulkGet(normalized.map(archive => archive.id));
+      const newest = normalized.filter((archive, index) => {
+        const current = existing[index];
+        return !current || archive.updatedAt >= current.updatedAt;
+      });
+      await this.db.archives.bulkPut(newest);
+      restoredCount = newest.length;
+    });
+    return restoredCount;
+  }
+
   async clear() {
     await this.db.archives.clear();
   }

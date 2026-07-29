@@ -1,9 +1,11 @@
 import { Component, type CSSProperties, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, CalendarRange, ChevronRight, FileText, Globe2, Image as ImageIcon, Layers3, LocateFixed, Map as MapIcon, MapPinned, Network, Pause, Play, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { BookOpen, CalendarRange, ChevronRight, Download, FileText, Globe2, Image as ImageIcon, Layers3, LocateFixed, Map as MapIcon, MapPinned, Network, Pause, Play, Plus, RotateCcw, Search, Trash2, Upload, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ArchiveBackupError, MAX_ARCHIVE_IMPORT_BYTES, parseArchiveBackup, serializeArchiveBackup } from './archiveBackup';
 import { LocalArchiveRepository } from './archiveRepository';
 import { archivePlaceRoute } from './archiveHierarchy';
+import { isPublicDemoArchive, PUBLIC_DEMO_ARCHIVES } from './demoArchives';
 import { fieldworkForAuthor, fieldworkForNationality } from './fieldworkData';
 import { EarthScene } from './EarthScene';
 import { cityIndex, cityList, isDistinctAdmin1SearchResult, loadAdmin1, loadGeography, representativePoint } from './geography';
@@ -456,7 +458,7 @@ function ArchiveTreeItem({ node, onOpen }: { node: ArchiveTreeNode; onOpen: (arc
         {node.archives.map(archive => <li key={archive.id}>
           <button onClick={() => onOpen(archive)}>
             <BookOpen size={15} />
-            <span><strong>{archive.title}</strong><small>{archive.authors.join('、')} · {archive.publishedDate}</small></span>
+            <span><strong>{archive.title}{isPublicDemoArchive(archive) && <em className="demo-label">公开演示</em>}</strong><small>{archive.authors.join('、')} · {archive.publishedDate}</small></span>
           </button>
         </li>)}
       </ul>}
@@ -464,11 +466,15 @@ function ArchiveTreeItem({ node, onOpen }: { node: ArchiveTreeNode; onOpen: (arc
   </li>;
 }
 
-function ArchiveIndexPanel({ open, archives, onClose, onOpen, onClear }: {
+function ArchiveIndexPanel({ open, archives, localArchiveCount, importing, onClose, onOpen, onExport, onImport, onClear }: {
   open: boolean;
   archives: EthnographyArchive[];
+  localArchiveCount: number;
+  importing: boolean;
   onClose: () => void;
   onOpen: (archive: EthnographyArchive) => void;
+  onExport: () => void;
+  onImport: (file: File, mode: 'merge' | 'replace') => void;
   onClear: () => void;
 }) {
   const tree = useMemo(() => buildArchiveTree(archives), [archives]);
@@ -482,7 +488,23 @@ function ArchiveIndexPanel({ open, archives, onClose, onOpen, onClear }: {
       {archives.length === 0 ? <div className="empty-state"><MapPinned size={27} /><p>还没有民族志档案</p><span>关闭面板，点击地图上的具体地点，建立第一份阅读档案。</span></div> :
         <ul className="archive-tree archive-tree-root">{tree.map(node => <ArchiveTreeItem key={node.label} node={node} onOpen={onOpen} />)}</ul>}
     </div>
-    {archives.length > 0 && <footer className="panel-footer"><button onClick={onClear}><RotateCcw size={15} />清空全部档案</button></footer>}
+    <footer className="panel-footer archive-data-footer">
+      <p>{localArchiveCount > 0 ? `本机保存了 ${localArchiveCount} 份私人档案` : '当前仅展示随网站发布的只读演示档案'}</p>
+      <div className="archive-data-actions">
+        <button onClick={onExport} disabled={localArchiveCount === 0}><Download size={15} />导出私人档案</button>
+        <label className={`panel-file-action ${importing ? 'is-disabled' : ''}`}><Upload size={15} />导入并合并<input type="file" accept=".json,application/json" disabled={importing} onChange={event => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = '';
+          if (file) onImport(file, 'merge');
+        }} /></label>
+        <label className={`panel-file-action panel-file-action-danger ${importing ? 'is-disabled' : ''}`}><RotateCcw size={15} />导入并覆盖<input type="file" accept=".json,application/json" disabled={importing} onChange={event => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = '';
+          if (file) onImport(file, 'replace');
+        }} /></label>
+      </div>
+      {localArchiveCount > 0 && <button className="clear-archives-action" onClick={onClear}><Trash2 size={15} />清空私人档案</button>}
+    </footer>
   </aside>;
 }
 
@@ -665,8 +687,9 @@ function ArchiveForm({ place, archive, onSubmit, onCancel }: {
   </form>;
 }
 
-function ArchiveDetail({ archive, onReadNote, onCreateAnother, onEdit, onRemove, onTrace }: {
+function ArchiveDetail({ archive, readOnly, onReadNote, onCreateAnother, onEdit, onRemove, onTrace }: {
   archive: EthnographyArchive;
+  readOnly?: boolean;
   onReadNote: () => void;
   onCreateAnother: () => void;
   onEdit: () => void;
@@ -683,6 +706,7 @@ function ArchiveDetail({ archive, onReadNote, onCreateAnother, onEdit, onRemove,
   return <article className="archive-detail">
     <header>
       <span className="eyebrow">{archive.place.parents.join(' / ') || archive.place.countryCode || 'FIELD LOCATION'}</span>
+      {readOnly && <span className="demo-archive-badge">公开演示 · 只读</span>}
       {chinese && <div className="edition-switch"><button className={editionRole === 'original' ? 'is-active' : ''} onClick={() => setEditionRole('original')}>原始版本</button><button className={editionRole === 'chinese' ? 'is-active' : ''} onClick={() => setEditionRole('chinese')}>中文版本</button></div>}
       <h2>{edition.title}</h2>
       <p>{[archive.authors.join('、'), edition.publisher, edition.publishedDate].filter(Boolean).join(' · ')}</p>
@@ -709,10 +733,11 @@ function ArchiveDetail({ archive, onReadNote, onCreateAnother, onEdit, onRemove,
       <ChevronRight size={17} />
     </button>}
     {archive.tags.length > 0 && <div className="tag-row">{archive.tags.map(tag => <span key={tag}>{tag}</span>)}</div>}
+    {readOnly && <p className="demo-archive-notice">此条目用于展示项目能力，不会写入你的浏览器，也不会包含在私人档案备份中。</p>}
     <div className="archive-actions">
       <button type="button" onClick={onCreateAnother}><Plus size={16} />继续新增</button>
-      <button type="button" onClick={onEdit}><FileText size={16} />重新编辑</button>
-      <button type="button" className="danger-action" onClick={onRemove}><Trash2 size={16} />删除</button>
+      {!readOnly && <button type="button" onClick={onEdit}><FileText size={16} />重新编辑</button>}
+      {!readOnly && <button type="button" className="danger-action" onClick={onRemove}><Trash2 size={16} />删除</button>}
     </div>
   </article>;
 }
@@ -737,6 +762,7 @@ function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, on
 }) {
   if (!state) return null;
   const placeArchives = archives.filter(archive => archive.placeId === state.place.id);
+  const readOnly = state.mode === 'detail' || state.mode === 'note' ? isPublicDemoArchive(state.archive) : false;
   return <div className="archive-modal-shell" role="dialog" aria-modal="true">
     <div className="archive-modal">
       <button className="icon-button archive-close" onClick={onClose} aria-label="关闭民族志档案"><X size={19} /></button>
@@ -758,7 +784,7 @@ function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, on
             <button className="add-another" onClick={() => onMode('form')}><Plus size={16} />新增此地点的民族志</button>
           </div>}
       </>}
-      {state.mode === 'detail' && <ArchiveDetail archive={state.archive} onReadNote={() => onMode('note')} onCreateAnother={() => onMode('form')} onEdit={() => onMode('edit')} onRemove={() => onRemove(state.archive)} onTrace={onTrace} />}
+      {state.mode === 'detail' && <ArchiveDetail archive={state.archive} readOnly={readOnly} onReadNote={() => onMode('note')} onCreateAnother={() => onMode('form')} onEdit={() => onMode('edit')} onRemove={() => onRemove(state.archive)} onTrace={onTrace} />}
       {state.mode === 'note' && <ArchiveNote archive={state.archive} />}
     </div>
   </div>;
@@ -766,7 +792,9 @@ function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, on
 
 export default function App({ repository: injectedRepository }: { repository?: ArchiveRepository }) {
   const repository = useMemo(() => injectedRepository ?? new LocalArchiveRepository(), [injectedRepository]);
-  const [archives, setArchives] = useState<EthnographyArchive[]>([]);
+  const [localArchives, setLocalArchives] = useState<EthnographyArchive[]>([]);
+  const archives = useMemo(() => [...PUBLIC_DEMO_ARCHIVES, ...localArchives]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [localArchives]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -788,6 +816,7 @@ export default function App({ repository: injectedRepository }: { repository?: A
   const [timeYear, setTimeYear] = useState<number | null>(null);
   const [timePlaying, setTimePlaying] = useState(false);
   const [hoverArchiveLocation, setHoverArchiveLocation] = useState<HoverLocation | null>(null);
+  const [importingArchives, setImportingArchives] = useState(false);
   const hoverClearTimer = useRef<number | null>(null);
 
   const availableYears = useMemo(() => archives.flatMap(archive => [
@@ -856,7 +885,7 @@ export default function App({ repository: injectedRepository }: { repository?: A
       }
       return archive;
     }));
-    setArchives(enrichedArchives);
+    setLocalArchives(enrichedArchives);
   }, [repository]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -877,7 +906,7 @@ export default function App({ repository: injectedRepository }: { repository?: A
 
   const openPlaceArchives = async (place: Place) => {
     const snapshot = placeSnapshot(place);
-    const placeArchives = await repository.listByPlace(snapshot.id);
+    const placeArchives = archives.filter(archive => archive.placeId === snapshot.id);
     if (placeArchives.length === 1) {
       setArchiveModal({ place: placeArchives[0].place, mode: 'detail', archive: placeArchives[0] });
       return;
@@ -910,14 +939,57 @@ export default function App({ repository: injectedRepository }: { repository?: A
   };
 
   const removeArchive = async (archive: EthnographyArchive) => {
+    if (isPublicDemoArchive(archive)) return;
     if (!window.confirm(`确定删除《${archive.title}》吗？`)) return;
     await repository.remove(archive.id);
     await refresh();
     setArchiveModal({ place: archive.place, mode: 'list' });
   };
 
+  const exportArchives = useCallback(() => {
+    if (localArchives.length === 0) {
+      setToast('当前没有需要导出的私人档案');
+      return;
+    }
+    const content = serializeArchiveBackup(localArchives);
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ethnographic-archives-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setToast(`已导出 ${localArchives.length} 份私人档案`);
+  }, [localArchives]);
+
+  const importArchives = async (file: File, mode: 'merge' | 'replace') => {
+    if (file.size > MAX_ARCHIVE_IMPORT_BYTES) {
+      setToast('备份文件超过 20 MB，已停止导入');
+      return;
+    }
+    if (mode === 'replace' && localArchives.length > 0 &&
+      !window.confirm(`覆盖导入会先移除本机现有的 ${localArchives.length} 份私人档案。确定继续吗？`)) return;
+    setImportingArchives(true);
+    try {
+      const backup = parseArchiveBackup(await file.text());
+      const demoIds = new Set(PUBLIC_DEMO_ARCHIVES.map(archive => archive.id));
+      const personalArchives = backup.archives.filter(archive => !isPublicDemoArchive(archive) && !demoIds.has(archive.id));
+      const restoredCount = await repository.restore(personalArchives, mode);
+      await refresh();
+      setToast(`已${mode === 'merge' ? '合并' : '恢复'} ${restoredCount} 份私人档案`);
+    } catch (error) {
+      const message = error instanceof ArchiveBackupError ? error.message : '导入失败，请检查备份文件';
+      setToast(message);
+    } finally {
+      setImportingArchives(false);
+    }
+  };
+
   const clearArchives = async () => {
-    if (!window.confirm('确定清空全部民族志档案吗？此操作无法撤销。')) return;
+    if (localArchives.length === 0) return;
+    if (window.confirm('清空前建议下载一份 JSON 备份。现在下载吗？')) exportArchives();
+    if (!window.confirm(`确定清空本机保存的 ${localArchives.length} 份私人档案吗？公开演示档案会保留，此操作无法撤销。`)) return;
     await repository.clear();
     await refresh();
     setPanelOpen(false);
@@ -1045,7 +1117,7 @@ export default function App({ repository: injectedRepository }: { repository?: A
       <button className="garden-button" onClick={() => { setPanelOpen(true); setSearchOpen(false); }} aria-label="打开地点档案"><MapPinned size={14} />地点档案</button>
     </div>
     <SearchPanel open={searchOpen && searchSubmitted} query={searchQuery} results={searchResults} searching={searching} onSelect={selectSearchResult} />
-    <ArchiveIndexPanel open={panelOpen} archives={archives} onClose={() => setPanelOpen(false)} onOpen={openArchive} onClear={() => void clearArchives()} />
+    <ArchiveIndexPanel open={panelOpen} archives={archives} localArchiveCount={localArchives.length} importing={importingArchives} onClose={() => setPanelOpen(false)} onOpen={openArchive} onExport={exportArchives} onImport={(file, mode) => void importArchives(file, mode)} onClear={() => void clearArchives()} />
     <TimeAtlas open={timeOpen} mode={timeMode} year={activeYear} minYear={minYear} maxYear={maxYear} count={displayedArchives.length} playing={timePlaying} onMode={mode => { setTimeMode(mode); setTimeYear(activeYear); setTimePlaying(false); }} onYear={year => { setTimeYear(year); setTimePlaying(false); }} onTogglePlay={() => { if (activeYear >= maxYear) setTimeYear(minYear); setTimePlaying(value => !value); }} onClose={() => { setTimeOpen(false); setTimePlaying(false); }} onClear={() => { setTimeYear(null); setTimePlaying(false); setTimeOpen(false); }} />
     <ResearchNetworkPanel open={networkOpen} archives={archives} onClose={() => setNetworkOpen(false)} onAuthor={author => { setViewMode('map'); setNetworkOpen(false); void showAuthorTrajectory(author); }} onNationality={code => { setViewMode('map'); setNetworkOpen(false); void showNationalityTrajectory(code); }} onClear={() => { setTrajectorySteps([]); setHighlightedPlaces([]); setToast('已清除研究网络'); }} />
     <ThemeLayerPanel open={themeOpen} tags={themeTags} selected={selectedTags} onToggle={key => setSelectedTags(current => current.includes(key) ? current.filter(tag => tag !== key) : [...current, key])} onClear={() => setSelectedTags([])} onClose={() => setThemeOpen(false)} />

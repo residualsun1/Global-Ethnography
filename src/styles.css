@@ -115,6 +115,17 @@ button { font: inherit; }
 .panel-footer { padding: 15px 22px 23px; border-top: 1px solid var(--hairline); }
 .panel-footer button { width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; padding: 11px; border: 1px solid var(--hairline); border-radius: 2px; color: var(--muted-ink); background: rgba(255,255,255,.13); cursor: pointer; font-size: 10px; letter-spacing: .06em; }
 .panel-footer button:hover { color: var(--terracotta-deep); border-color: rgba(152,74,54,.32); }
+.panel-footer button:disabled { opacity: .42; cursor: not-allowed; }
+.archive-data-footer { display: grid; gap: 10px; }
+.archive-data-footer > p { margin: 0; color: var(--muted-ink); font: 10px/1.45 var(--serif); text-align: center; letter-spacing: .04em; }
+.archive-data-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.archive-data-actions > button:first-child { grid-column: 1 / -1; }
+.panel-file-action { position: relative; min-height: 38px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--hairline); border-radius: 2px; color: var(--muted-ink); background: rgba(255,255,255,.13); cursor: pointer; font: 10px var(--sans); letter-spacing: .04em; }
+.panel-file-action:hover { color: var(--terracotta-deep); border-color: rgba(152,74,54,.32); }
+.panel-file-action input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.panel-file-action.is-disabled { opacity: .42; pointer-events: none; }
+.panel-file-action-danger { color: #7c493d; }
+.panel-footer .clear-archives-action { margin-top: 2px; color: var(--terracotta-deep); background: rgba(200,100,69,.07); }
 .scrim { position: absolute; z-index: 10; inset: 0; visibility: hidden; background: transparent; }
 .scrim.is-visible { visibility: visible; }
 
@@ -200,6 +211,7 @@ button { font: inherit; }
 .theme-layer-panel > footer button { border: 0; color: var(--terracotta-deep); background: transparent; cursor: pointer; font: 9px var(--serif); }
 
 .archive-index-panel .panel-body { padding: 12px 13px 18px; }
+.demo-label { display: inline-flex; margin-left: 7px; padding: 2px 5px; border: 1px solid rgba(91,105,79,.28); border-radius: 2px; color: #5f6d53; font: normal 8px var(--sans); letter-spacing: .04em; vertical-align: 1px; }
 .search-panel { position: absolute; z-index: 12; top: 70px; left: 290px; width: min(284px, calc(100vw - 446px)); max-height: min(560px, calc(100vh - 100px)); display: flex; flex-direction: column; visibility: hidden; opacity: 0; transform: translateY(-8px); color: var(--ink); background-color: var(--paper); background-image: linear-gradient(90deg, rgba(105,85,55,.028) 1px, transparent 1px), linear-gradient(rgba(105,85,55,.018) 1px, transparent 1px); background-size: 34px 34px; border: 1px solid rgba(63,53,40,.34); box-shadow: 0 22px 65px rgba(63,53,40,.18); transition: opacity .2s, transform .2s, visibility .2s; }
 .search-panel.is-open { visibility: visible; opacity: 1; transform: none; }
 .search-results { min-height: 70px; overflow: auto; padding: 8px 11px 14px; }
@@ -264,6 +276,8 @@ button { font: inherit; }
 .archive-actions button[type="submit"], .archive-empty button, .place-archive-list .add-another { border-color: rgba(152,74,54,.48); background: var(--terracotta); color: #fff4e8; }
 .archive-actions button:hover, .archive-empty button:hover, .place-archive-list button:hover { filter: brightness(.97); border-color: var(--terracotta-deep); }
 .danger-action { color: var(--terracotta-deep) !important; background: rgba(200,100,69,.08) !important; }
+.demo-archive-badge { display: inline-flex; width: fit-content; margin-top: 9px; padding: 4px 7px; border: 1px solid rgba(91,105,79,.32); border-radius: 2px; color: #56634b; background: rgba(91,105,79,.08); font: 9px var(--sans); letter-spacing: .08em; }
+.demo-archive-notice { margin: 18px 0 0; padding: 11px 13px; border-left: 2px solid rgba(91,105,79,.42); color: var(--muted-ink); background: rgba(91,105,79,.06); font: 11px/1.65 var(--serif); }
 .archive-empty { min-height: 280px; display: grid; place-items: center; align-content: center; gap: 14px; padding: 36px; color: var(--muted-ink); text-align: center; }
 .archive-empty p { margin: 0; font: 600 16px var(--serif); color: var(--ink); }
 .place-archive-list { display: grid; gap: 10px; padding: 25px 44px 40px; }
