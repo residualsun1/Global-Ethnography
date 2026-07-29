@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { greatCircleCoordinates, planarCoordinates, splitAntimeridian, trajectoryLegCoordinates } from './EarthScene';
+import { greatCircleCoordinates, planarCoordinates, splitAntimeridian, trajectoryLegCoordinates } from './trajectoryGeometry';
 import type { Place } from './types';
 
 const place = (name: string, latitude: number, longitude: number): Place => ({
