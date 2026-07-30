@@ -3,7 +3,7 @@
 [在线演示](https://global-ethnography.pages.dev/) · [GitHub 仓库](https://github.com/residualsun1/Global-Ethnography)
 
 <p align="center">
-  <img src="./public/assets/branding/project-icon.png" alt="民族志数据档案项目图标" width="256" />
+  <img src="./public/assets/branding/project-icon.png" alt="民族志数据档案项目图标" width="180" />
 </p>
 
 一个以交互式地球与平面地图为入口的民族志个人知识档案。项目将作品、作者、田野地点、研究时间、研究轨迹和主题标签组织在同一套可视化界面中。
