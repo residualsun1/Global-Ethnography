@@ -1,6 +1,6 @@
 # 民族志数据档案
 
-[在线演示](https://global-ethnography.pages.dev/) · [GitHub 仓库](https://github.com/residualsun1/Global-Ethnography)
+[在线演示](https://ethnoarchive.com/) · [GitHub 仓库](https://github.com/residualsun1/Global-Ethnography)
 
 <p align="center">
   <img src="./public/assets/branding/project-icon.png" alt="民族志数据档案项目图标" width="180" />
