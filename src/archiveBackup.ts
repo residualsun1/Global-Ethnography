@@ -15,7 +15,7 @@ export const MAX_ARCHIVE_IMPORT_BYTES = 20 * 1024 * 1024;
 export const ARCHIVE_BACKUP_APP_VERSION = '1.0.0';
 const MAX_ARCHIVE_COUNT = 5_000;
 const placeKinds = new Set(['country', 'province', 'island', 'district', 'county', 'city', 'town', 'village']);
-const syncStatuses = new Set<SyncStatus>(['local', 'synced', 'pending', 'error']);
+const syncStatuses = new Set<SyncStatus>(['local', 'synced', 'pending', 'error', 'conflict']);
 
 export interface ArchiveBackup {
   format: typeof ARCHIVE_BACKUP_FORMAT;
@@ -48,6 +48,14 @@ function stringValue(value: unknown, label: string, allowEmpty = true) {
 
 function optionalString(value: unknown, label: string) {
   return value === undefined ? undefined : stringValue(value, label);
+}
+
+function optionalNonNegativeInteger(value: unknown, label: string) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ArchiveBackupError(`${label}不是有效的非负整数`);
+  }
+  return value;
 }
 
 function stringArray(value: unknown, label: string) {
@@ -84,6 +92,19 @@ function image(value: unknown, label: string): ArchiveImage | undefined {
     return {
       type: 'local',
       dataUrl,
+      name: optionalString(source.name, `${label}.name`),
+      alt: optionalString(source.alt, `${label}.alt`)
+    };
+  }
+  if (source.type === 'storage') {
+    const path = stringValue(source.path, `${label}.path`, false);
+    if (path.startsWith('/') || path.includes('..') || path.includes('\\')) {
+      throw new ArchiveBackupError(`${label}.path 不是安全的对象路径`);
+    }
+    const url = optionalString(source.url, `${label}.url`);
+    if (url && !url.startsWith('https://')) throw new ArchiveBackupError(`${label}.url 必须使用 HTTPS`);
+    return {
+      type: 'storage', path, url,
       name: optionalString(source.name, `${label}.name`),
       alt: optionalString(source.alt, `${label}.alt`)
     };
@@ -223,8 +244,17 @@ function archive(value: unknown, index: number): EthnographyArchive {
     editions: editionsSource?.map((item, itemIndex) => edition(item, `${label}.editions[${itemIndex}]`)),
     createdAt: isoDate(source.createdAt, `${label}.createdAt`),
     updatedAt: isoDate(source.updatedAt, `${label}.updatedAt`),
-    syncStatus: status as SyncStatus
+    syncStatus: status as SyncStatus,
+    visibility: source.visibility === undefined ? undefined : source.visibility === 'private' || source.visibility === 'public'
+      ? source.visibility
+      : (() => { throw new ArchiveBackupError(`${label}.visibility 不受支持`); })(),
+    revision: optionalNonNegativeInteger(source.revision, `${label}.revision`),
+    serverSequence: optionalNonNegativeInteger(source.serverSequence, `${label}.serverSequence`)
   };
+}
+
+export function validateArchiveRecord(value: unknown) {
+  return archive(value, 0);
 }
 
 export function createArchiveBackup(archives: readonly EthnographyArchive[]): ArchiveBackup {

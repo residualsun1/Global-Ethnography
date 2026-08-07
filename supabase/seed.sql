@@ -1,0 +1,3 @@
+-- After creating or inviting the first user in Supabase Auth, grant editor access:
+-- insert into public.editor_memberships(user_id, role)
+-- select id, 'admin' from auth.users where email = 'you@example.com';

@@ -7,7 +7,8 @@ export interface City {
   populationRank?: number;
 }
 
-export type SyncStatus = 'local' | 'synced' | 'pending' | 'error';
+export type SyncStatus = 'local' | 'synced' | 'pending' | 'error' | 'conflict';
+export type ArchiveVisibility = 'private' | 'public';
 
 export type PlaceKind = 'country' | 'province' | 'island' | 'district' | 'county' | 'city' | 'town' | 'village';
 
@@ -34,9 +35,10 @@ export interface SavedPoint {
 }
 
 export interface ArchiveImage {
-  type: 'url' | 'local';
+  type: 'url' | 'local' | 'storage';
   url?: string;
   dataUrl?: string;
+  path?: string;
   name?: string;
   alt?: string;
 }
@@ -125,6 +127,31 @@ export interface EthnographyArchive {
   createdAt: string;
   updatedAt: string;
   syncStatus: SyncStatus;
+  visibility?: ArchiveVisibility;
+  revision?: number;
+  serverSequence?: number;
+}
+
+export interface ArchiveMutation {
+  archiveId: string;
+  mutationId: string;
+  operation: 'upsert' | 'delete';
+  baseRevision: number;
+  archive?: EthnographyArchive;
+  createdAt: string;
+}
+
+export interface ArchiveConflict {
+  archiveId: string;
+  localArchive?: EthnographyArchive;
+  remoteArchive?: EthnographyArchive;
+  remoteRevision?: number;
+  detectedAt: string;
+}
+
+export interface ArchiveSyncMeta {
+  key: string;
+  value: string;
 }
 
 export interface ArchiveRepository {

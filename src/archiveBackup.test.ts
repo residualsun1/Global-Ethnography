@@ -28,4 +28,24 @@ describe('archive backup', () => {
 
     expect(() => parseArchiveBackup(JSON.stringify(backup))).toThrow('重复档案 ID');
   });
+
+  it('round-trips cloud metadata and safe storage references', () => {
+    const archive = structuredClone(PUBLIC_DEMO_ARCHIVES[0]);
+    archive.visibility = 'private';
+    archive.revision = 3;
+    archive.serverSequence = 9;
+    archive.syncStatus = 'conflict';
+    archive.bookCover = { type: 'storage', path: 'user/archive/cover.webp', url: 'https://example.com/signed-cover' };
+
+    expect(parseArchiveBackup(serializeArchiveBackup([archive])).archives[0]).toMatchObject({
+      visibility: 'private', revision: 3, serverSequence: 9, syncStatus: 'conflict',
+      bookCover: { type: 'storage', path: 'user/archive/cover.webp' }
+    });
+  });
+
+  it('rejects unsafe storage paths', () => {
+    const backup = JSON.parse(serializeArchiveBackup(PUBLIC_DEMO_ARCHIVES));
+    backup.archives[0].bookCover = { type: 'storage', path: '../private/cover.png' };
+    expect(() => parseArchiveBackup(JSON.stringify(backup))).toThrow('安全的对象路径');
+  });
 });

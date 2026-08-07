@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "check": "npm run build && npm test"
+    "geography:manifest": "node scripts/geography-manifest.mjs",
+    "geography:verify": "node scripts/geography-manifest.mjs --verify",
+    "check": "npm run geography:verify && npm run build && npm test"
   },
   "engines": {
     "node": ">=22 <25",

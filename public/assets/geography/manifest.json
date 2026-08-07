@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "policy": "version-controlled-read-only-geography",
+  "countries": {
+    "count": 257,
+    "sha256": "b7eff02c39912326d724f41ae277a4047acb3d435a188c5d438c00b311431bad"
+  },
+  "admin1": {
+    "fileCount": 257,
+    "sha256": "7dd038bee9090f94995517b609492bdde7bae578c5459c3d2b8c8a0343e94f16"
+  },
+  "cities": {
+    "count": 7342,
+    "sha256": "622f52da6461d96473d99a0eced1290fde9a4a508941ee7d059bb659d3b63504"
+  }
+}

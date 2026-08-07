@@ -1,17 +1,21 @@
 import { Component, type CSSProperties, type ErrorInfo, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, CalendarRange, ChevronRight, Download, FileText, Globe2, Image as ImageIcon, Layers3, LocateFixed, Map as MapIcon, MapPinned, Network, Pause, Play, Plus, RotateCcw, Search, Trash2, Upload, X } from 'lucide-react';
+import { BookOpen, CalendarRange, ChevronRight, Cloud, Download, FileText, Globe2, Image as ImageIcon, Layers3, LocateFixed, LogIn, LogOut, Map as MapIcon, MapPinned, Network, Pause, Play, Plus, RefreshCw, RotateCcw, Search, Trash2, Upload, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArchiveBackupError, MAX_ARCHIVE_IMPORT_BYTES, parseArchiveBackup, serializeArchiveBackup } from './archiveBackup';
 import { ARCHIVE_IMAGE_ACCEPT, ArchiveMediaError, MAX_MARKDOWN_NOTE_BYTES, normalizeHttpsImageUrl, validateArchiveImageFile } from './archiveMedia';
 import { LocalArchiveRepository } from './archiveRepository';
+import { ArchiveCloudGateway } from './archiveCloudGateway';
+import { ArchiveSyncCoordinator } from './archiveSync';
+import { cloudConfig } from './cloudConfig';
+import { CloudApiError, SupabaseRestClient, type CloudSession } from './supabaseRestClient';
 import { archivePlaceRoute } from './archiveHierarchy';
 import { isPublicDemoArchive, PUBLIC_DEMO_ARCHIVES } from './demoArchives';
 import { fieldworkForAuthor, fieldworkForNationality } from './fieldworkData';
 import { EarthScene } from './EarthScene';
 import { cityIndex, cityList, isDistinctAdmin1SearchResult, loadAdmin1, loadGeography, representativePoint } from './geography';
 import { latLonToVector3 } from './geo';
-import type { ArchiveAuthor, ArchiveImage, ArchiveRepository, EthnographyArchive, EthnographyEdition, FocusTarget, GeoRegion, HoverLocation, MarkdownNote, Place, PlaceHierarchy, PlaceSnapshot, SavedPoint, TrajectoryStep } from './types';
+import type { ArchiveAuthor, ArchiveConflict, ArchiveImage, ArchiveRepository, EthnographyArchive, EthnographyEdition, FocusTarget, GeoRegion, HoverLocation, MarkdownNote, Place, PlaceHierarchy, PlaceSnapshot, SavedPoint, TrajectoryStep } from './types';
 
 class SceneErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -70,7 +74,7 @@ function normalizeTag(value: string) {
 }
 
 function imageSource(image: ArchiveImage | undefined) {
-  return image?.type === 'url' ? image.url : image?.dataUrl;
+  return image?.type === 'local' ? image.dataUrl : image?.url;
 }
 
 export function originalEdition(archive: EthnographyArchive): EthnographyEdition {
@@ -459,7 +463,7 @@ function ArchiveTreeItem({ node, onOpen }: { node: ArchiveTreeNode; onOpen: (arc
         {node.archives.map(archive => <li key={archive.id}>
           <button onClick={() => onOpen(archive)}>
             <BookOpen size={15} />
-            <span><strong>{archive.title}{isPublicDemoArchive(archive) && <em className="demo-label">公开演示</em>}</strong><small>{archive.authors.join('、')} · {archive.publishedDate}</small></span>
+            <span><strong>{archive.title}{isPublicDemoArchive(archive) && <em className="demo-label">公开演示</em>}{!isPublicDemoArchive(archive) && archive.visibility === 'public' && <em className="demo-label">已发布</em>}</strong><small>{archive.authors.join('、')} · {archive.publishedDate}{archive.syncStatus === 'pending' ? ' · 待同步' : archive.syncStatus === 'conflict' ? ' · 有冲突' : ''}</small></span>
           </button>
         </li>)}
       </ul>}
@@ -467,16 +471,72 @@ function ArchiveTreeItem({ node, onOpen }: { node: ArchiveTreeNode; onOpen: (arc
   </li>;
 }
 
-function ArchiveIndexPanel({ open, archives, localArchiveCount, importing, onClose, onOpen, onExport, onImport, onClear }: {
+type CloudState = 'local' | 'offline' | 'syncing' | 'synced' | 'error' | 'conflict';
+
+function CloudAccount({ enabled, session, state, onSignIn, onSignOut, onSync }: {
+  enabled: boolean;
+  session?: CloudSession;
+  state: CloudState;
+  onSignIn: (email: string, password: string) => Promise<void>;
+  onSignOut: () => Promise<void>;
+  onSync: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (!enabled) return null;
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    setError('');
+    try {
+      await onSignIn(String(form.get('email') ?? ''), String(form.get('password') ?? ''));
+      setOpen(false);
+    } catch (caught) {
+      setError(caught instanceof CloudApiError ? caught.message : '登录失败，请稍后重试');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stateLabel = state === 'syncing' ? '同步中' : state === 'synced' ? '已同步' : state === 'conflict' ? '有冲突' : state === 'error' ? '同步失败' : state === 'offline' ? '离线' : '云端';
+  return <div className="cloud-account">
+    <button className={`top-action-button cloud-account-button is-${state}`} onClick={() => setOpen(value => !value)} aria-expanded={open}><Cloud size={14} />{session ? stateLabel : '登录同步'}</button>
+    {open && <div className="cloud-account-popover">
+      {session ? <>
+        <strong>{session.user.email ?? '已登录编辑者'}</strong>
+        <small>私人档案自动同步；发布后才对访客可见。</small>
+        <div><button disabled={state === 'syncing'} onClick={() => void onSync()}><RefreshCw size={13} />立即同步</button><button onClick={() => void onSignOut()}><LogOut size={13} />退出</button></div>
+      </> : <form onSubmit={event => void submit(event)}>
+        <strong>编辑者登录</strong>
+        <small>账号由站点管理员在 Supabase 中邀请和授权。</small>
+        <input name="email" type="email" required autoComplete="email" placeholder="邮箱" />
+        <input name="password" type="password" required autoComplete="current-password" placeholder="密码" />
+        {error && <p>{error}</p>}
+        <button type="submit" disabled={busy}><LogIn size={13} />{busy ? '登录中' : '登录'}</button>
+      </form>}
+    </div>}
+  </div>;
+}
+
+function ArchiveIndexPanel({ open, archives, localArchiveCount, importing, cloudEnabled, session, cloudState, legacyCount, conflicts, onClose, onOpen, onExport, onImport, onClear, onClaim, onSync, onResolveConflict }: {
   open: boolean;
   archives: EthnographyArchive[];
   localArchiveCount: number;
   importing: boolean;
+  cloudEnabled: boolean;
+  session?: CloudSession;
+  cloudState: CloudState;
+  legacyCount: number;
+  conflicts: ArchiveConflict[];
   onClose: () => void;
   onOpen: (archive: EthnographyArchive) => void;
   onExport: () => void;
   onImport: (file: File, mode: 'merge' | 'replace') => void;
   onClear: () => void;
+  onClaim: () => void;
+  onSync: () => void;
+  onResolveConflict: (archiveId: string, resolution: 'local' | 'remote') => void;
 }) {
   const tree = useMemo(() => buildArchiveTree(archives), [archives]);
   return <aside className={`point-panel archive-index-panel ${open ? 'is-open' : ''}`} aria-hidden={!open} inert={!open}>
@@ -490,7 +550,12 @@ function ArchiveIndexPanel({ open, archives, localArchiveCount, importing, onClo
         <ul className="archive-tree archive-tree-root">{tree.map(node => <ArchiveTreeItem key={node.label} node={node} onOpen={onOpen} />)}</ul>}
     </div>
     <footer className="panel-footer archive-data-footer">
-      <p>{localArchiveCount > 0 ? `本机保存了 ${localArchiveCount} 份私人档案` : '当前仅展示随网站发布的只读演示档案'}</p>
+      <p>{cloudEnabled
+        ? `${localArchiveCount > 0 ? `本机缓存了 ${localArchiveCount} 份私人档案` : '当前没有本机私人档案'} · ${session ? cloudState === 'syncing' ? '正在同步' : cloudState === 'conflict' ? '同步冲突' : cloudState === 'error' ? '同步失败' : '云端已连接' : '登录后可同步'}`
+        : localArchiveCount > 0 ? `本机保存了 ${localArchiveCount} 份私人档案` : '当前仅展示随网站发布的只读演示档案'}</p>
+      {session && legacyCount > 0 && <button className="claim-local-action" onClick={onClaim}><Cloud size={15} />备份并上传本机 {legacyCount} 份档案</button>}
+      {session && <button className="sync-now-action" onClick={onSync} disabled={cloudState === 'syncing'}><RefreshCw size={15} />立即同步</button>}
+      {conflicts.length > 0 && <div className="archive-conflicts"><strong>{conflicts.length} 份档案需要选择版本</strong>{conflicts.map(conflict => <div key={conflict.archiveId}><span>{conflict.localArchive?.title ?? conflict.remoteArchive?.title ?? conflict.archiveId}</span><button onClick={() => onResolveConflict(conflict.archiveId, 'local')}>保留本机</button><button onClick={() => onResolveConflict(conflict.archiveId, 'remote')}>保留云端</button></div>)}</div>}
       <div className="archive-data-actions">
         <button onClick={onExport} disabled={localArchiveCount === 0}><Download size={15} />导出私人档案</button>
         <label className={`panel-file-action ${importing ? 'is-disabled' : ''}`}><Upload size={15} />导入并合并<input type="file" accept=".json,application/json" disabled={importing} onChange={event => {
@@ -498,13 +563,13 @@ function ArchiveIndexPanel({ open, archives, localArchiveCount, importing, onClo
           event.currentTarget.value = '';
           if (file) onImport(file, 'merge');
         }} /></label>
-        <label className={`panel-file-action panel-file-action-danger ${importing ? 'is-disabled' : ''}`}><RotateCcw size={15} />导入并覆盖<input type="file" accept=".json,application/json" disabled={importing} onChange={event => {
+        {!cloudEnabled && <label className={`panel-file-action panel-file-action-danger ${importing ? 'is-disabled' : ''}`}><RotateCcw size={15} />导入并覆盖<input type="file" accept=".json,application/json" disabled={importing} onChange={event => {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = '';
           if (file) onImport(file, 'replace');
-        }} /></label>
+        }} /></label>}
       </div>
-      {localArchiveCount > 0 && <button className="clear-archives-action" onClick={onClear}><Trash2 size={15} />清空私人档案</button>}
+      {!cloudEnabled && localArchiveCount > 0 && <button className="clear-archives-action" onClick={onClear}><Trash2 size={15} />清空私人档案</button>}
     </footer>
   </aside>;
 }
@@ -713,14 +778,17 @@ function ArchiveForm({ place, archive, onSubmit, onCancel, onError }: {
   </form>;
 }
 
-function ArchiveDetail({ archive, readOnly, onReadNote, onCreateAnother, onEdit, onRemove, onTrace }: {
+function ArchiveDetail({ archive, readOnly, readOnlyLabel, canPublish, onReadNote, onCreateAnother, onEdit, onRemove, onTrace, onVisibility }: {
   archive: EthnographyArchive;
   readOnly?: boolean;
+  readOnlyLabel?: string;
+  canPublish?: boolean;
   onReadNote: () => void;
   onCreateAnother: () => void;
   onEdit: () => void;
   onRemove: () => void;
   onTrace: (author: ArchiveAuthor) => void;
+  onVisibility: () => void;
 }) {
   const original = originalEdition(archive);
   const chinese = chineseEdition(archive);
@@ -732,7 +800,8 @@ function ArchiveDetail({ archive, readOnly, onReadNote, onCreateAnother, onEdit,
   return <article className="archive-detail">
     <header>
       <span className="eyebrow">{archive.place.parents.join(' / ') || archive.place.countryCode || 'FIELD LOCATION'}</span>
-      {readOnly && <span className="demo-archive-badge">公开演示 · 只读</span>}
+      {readOnly && <span className="demo-archive-badge">{readOnlyLabel ?? '公开档案 · 只读'}</span>}
+      {!readOnly && archive.syncStatus !== 'local' && <span className="demo-archive-badge">{archive.syncStatus === 'pending' ? '待同步' : archive.syncStatus === 'conflict' ? '同步冲突' : archive.syncStatus === 'error' ? '同步失败' : archive.visibility === 'public' ? '已发布' : '私人草稿'}</span>}
       {chinese && <div className="edition-switch"><button className={editionRole === 'original' ? 'is-active' : ''} onClick={() => setEditionRole('original')}>原始版本</button><button className={editionRole === 'chinese' ? 'is-active' : ''} onClick={() => setEditionRole('chinese')}>中文版本</button></div>}
       <h2>{edition.title}</h2>
       <p>{[archive.authors.join('、'), edition.publisher, edition.publishedDate].filter(Boolean).join(' · ')}</p>
@@ -759,10 +828,11 @@ function ArchiveDetail({ archive, readOnly, onReadNote, onCreateAnother, onEdit,
       <ChevronRight size={17} />
     </button>}
     {archive.tags.length > 0 && <div className="tag-row">{archive.tags.map(tag => <span key={tag}>{tag}</span>)}</div>}
-    {readOnly && <p className="demo-archive-notice">此条目用于展示项目能力，不会写入你的浏览器，也不会包含在私人档案备份中。</p>}
+    {readOnly && <p className="demo-archive-notice">此条目为线上只读内容，不会被本机编辑操作覆盖。</p>}
     <div className="archive-actions">
       <button type="button" onClick={onCreateAnother}><Plus size={16} />继续新增</button>
       {!readOnly && <button type="button" onClick={onEdit}><FileText size={16} />重新编辑</button>}
+      {!readOnly && canPublish && <button type="button" onClick={onVisibility}><Cloud size={16} />{archive.visibility === 'public' ? '转为私人草稿' : '发布到线上'}</button>}
       {!readOnly && <button type="button" className="danger-action" onClick={onRemove}><Trash2 size={16} />删除</button>}
     </div>
   </article>;
@@ -775,9 +845,11 @@ function ArchiveNote({ archive }: { archive: EthnographyArchive }) {
   </article>;
 }
 
-function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, onMode, onRemove, onTrace, onError }: {
+function ArchiveModal({ state, archives, currentUserId, cloudEnabled, onClose, onCreate, onUpdate, onOpen, onMode, onRemove, onTrace, onVisibility, onError }: {
   state: ArchiveModalState | null;
   archives: EthnographyArchive[];
+  currentUserId?: string;
+  cloudEnabled: boolean;
   onClose: () => void;
   onCreate: (archive: Omit<EthnographyArchive, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus'>) => Promise<void>;
   onUpdate: (archive: EthnographyArchive, input: Omit<EthnographyArchive, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus'>) => Promise<void>;
@@ -785,11 +857,16 @@ function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, on
   onMode: (mode: ArchiveModalState['mode']) => void;
   onRemove: (archive: EthnographyArchive) => void;
   onTrace: (author: ArchiveAuthor) => void;
+  onVisibility: (archive: EthnographyArchive) => void;
   onError: (message: string) => void;
 }) {
   if (!state) return null;
   const placeArchives = archives.filter(archive => archive.placeId === state.place.id);
-  const readOnly = state.mode === 'detail' || state.mode === 'note' ? isPublicDemoArchive(state.archive) : false;
+  const demo = state.mode === 'detail' || state.mode === 'note' ? isPublicDemoArchive(state.archive) : false;
+  const remoteOtherOwner = state.mode === 'detail' || state.mode === 'note'
+    ? (state.archive.revision ?? 0) > 0 && state.archive.ownerId !== currentUserId
+    : false;
+  const readOnly = demo || remoteOtherOwner;
   return <div className="archive-modal-shell" role="dialog" aria-modal="true">
     <div className="archive-modal">
       <button className="icon-button archive-close" onClick={onClose} aria-label="关闭民族志档案"><X size={19} /></button>
@@ -811,17 +888,40 @@ function ArchiveModal({ state, archives, onClose, onCreate, onUpdate, onOpen, on
             <button className="add-another" onClick={() => onMode('form')}><Plus size={16} />新增此地点的民族志</button>
           </div>}
       </>}
-      {state.mode === 'detail' && <ArchiveDetail archive={state.archive} readOnly={readOnly} onReadNote={() => onMode('note')} onCreateAnother={() => onMode('form')} onEdit={() => onMode('edit')} onRemove={() => onRemove(state.archive)} onTrace={onTrace} />}
+      {state.mode === 'detail' && <ArchiveDetail archive={state.archive} readOnly={readOnly} readOnlyLabel={demo ? '公开演示 · 只读' : '公开档案 · 只读'} canPublish={cloudEnabled && Boolean(currentUserId) && state.archive.ownerId === currentUserId} onReadNote={() => onMode('note')} onCreateAnother={() => onMode('form')} onEdit={() => onMode('edit')} onRemove={() => onRemove(state.archive)} onTrace={onTrace} onVisibility={() => onVisibility(state.archive)} />}
       {state.mode === 'note' && <ArchiveNote archive={state.archive} />}
     </div>
   </div>;
 }
 
 export default function App({ repository: injectedRepository }: { repository?: ArchiveRepository }) {
-  const repository = useMemo(() => injectedRepository ?? new LocalArchiveRepository(), [injectedRepository]);
+  const config = useMemo(() => cloudConfig(), []);
+  const cloudEnabled = Boolean(config && !injectedRepository);
+  const repository = useMemo(() => injectedRepository ?? new LocalArchiveRepository({ syncEnabled: cloudEnabled }), [injectedRepository, cloudEnabled]);
+  const localRepository = repository instanceof LocalArchiveRepository ? repository : undefined;
+  const cloudClient = useMemo(() => config && cloudEnabled ? new SupabaseRestClient(config) : undefined, [config, cloudEnabled]);
+  const cloudGateway = useMemo(() => cloudClient ? new ArchiveCloudGateway(cloudClient) : undefined, [cloudClient]);
+  const syncCoordinator = useMemo(() => localRepository && cloudGateway ? new ArchiveSyncCoordinator(localRepository, cloudGateway) : undefined, [localRepository, cloudGateway]);
+  const [session, setSession] = useState<CloudSession | undefined>(() => cloudClient?.currentSession());
+  const [cloudState, setCloudState] = useState<CloudState>(cloudEnabled ? navigator.onLine ? 'synced' : 'offline' : 'local');
+  const [remotePublicArchives, setRemotePublicArchives] = useState<EthnographyArchive[]>([]);
+  const [conflicts, setConflicts] = useState<ArchiveConflict[]>([]);
   const [localArchives, setLocalArchives] = useState<EthnographyArchive[]>([]);
-  const archives = useMemo(() => [...PUBLIC_DEMO_ARCHIVES, ...localArchives]
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [localArchives]);
+  const visibleLocalArchives = useMemo(() => localArchives.filter(archive =>
+    !archive.ownerId || archive.ownerId === 'local-demo-user' || archive.ownerId === session?.user.id
+  ), [localArchives, session?.user.id]);
+  const archives = useMemo(() => {
+    const byId = new Map<string, EthnographyArchive>();
+    for (const archive of PUBLIC_DEMO_ARCHIVES) byId.set(archive.id, archive);
+    for (const archive of remotePublicArchives) byId.set(archive.id, archive);
+    for (const archive of visibleLocalArchives) byId.set(archive.id, archive);
+    return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }, [remotePublicArchives, visibleLocalArchives]);
+  const legacyArchiveCount = useMemo(() => localArchives.filter(archive => !archive.ownerId || archive.ownerId === 'local-demo-user').length, [localArchives]);
+  const visibleConflicts = useMemo(() => conflicts.filter(conflict => {
+    const ownerId = conflict.localArchive?.ownerId ?? conflict.remoteArchive?.ownerId;
+    return Boolean(session && (!ownerId || ownerId === 'local-demo-user' || ownerId === session.user.id));
+  }), [conflicts, session]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -908,14 +1008,64 @@ export default function App({ repository: injectedRepository }: { repository?: A
       const place = await enrichPlaceSnapshot(archive.place);
       const nationality = normalizeContributorNationalities(archive, geography);
       if (!samePlaceHierarchy(archive.place, place) || nationality.changed) {
-        return repository.update(archive.id, { place, placeId: place.id, contributors: nationality.contributors });
+        return { ...archive, place, placeId: place.id, contributors: nationality.contributors };
       }
       return archive;
     }));
     setLocalArchives(enrichedArchives);
-  }, [repository]);
+    if (localRepository) setConflicts(await localRepository.listConflicts());
+  }, [repository, localRepository]);
+
+  const refreshPublicArchives = useCallback(async () => {
+    if (!cloudGateway) return;
+    setRemotePublicArchives(await cloudGateway.listPublic());
+  }, [cloudGateway]);
+
+  const synchronize = useCallback(async () => {
+    if (!session || !syncCoordinator || !navigator.onLine) {
+      if (cloudEnabled) setCloudState('offline');
+      return;
+    }
+    setCloudState('syncing');
+    try {
+      const result = await syncCoordinator.synchronize(session.user);
+      await Promise.all([refresh(), refreshPublicArchives()]);
+      setCloudState(result.conflicts > 0 ? 'conflict' : result.failed > 0 ? 'error' : 'synced');
+      if (result.pushed + result.pulled > 0) setToast(`云端同步完成：上传 ${result.pushed}，接收 ${result.pulled}`);
+    } catch (error) {
+      await refresh().catch(() => undefined);
+      setCloudState('error');
+      setToast(error instanceof CloudApiError ? error.message : '云端同步失败，本机数据已保留');
+    }
+  }, [session, syncCoordinator, cloudEnabled, refresh, refreshPublicArchives]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!cloudClient) return;
+    return cloudClient.onSessionChange(next => {
+      setSession(next);
+      setCloudState(next ? navigator.onLine ? 'synced' : 'offline' : 'offline');
+    });
+  }, [cloudClient]);
+  useEffect(() => {
+    if (!cloudGateway) return;
+    void refreshPublicArchives().catch(() => setCloudState(current => current === 'local' ? current : 'error'));
+  }, [cloudGateway, refreshPublicArchives]);
+  useEffect(() => { if (session) void synchronize(); }, [session, synchronize]);
+  useEffect(() => {
+    if (!cloudEnabled) return;
+    const onOnline = () => { if (session) void synchronize(); };
+    const onOffline = () => setCloudState('offline');
+    const onVisibility = () => { if (document.visibilityState === 'visible' && session) void synchronize(); };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [cloudEnabled, session, synchronize]);
   useEffect(() => {
     if (ready) return;
     const fallback = window.setTimeout(() => setReady(true), 6000);
@@ -947,10 +1097,18 @@ export default function App({ repository: injectedRepository }: { repository?: A
       return;
     }
     const place = await enrichPlaceSnapshot(input.place);
-    const archive = await repository.create({ ...input, place, placeId: place.id });
+    const archive = await repository.create({
+      ...input,
+      ownerId: session?.user.id ?? 'local-demo-user',
+      visibility: 'private',
+      revision: 0,
+      place,
+      placeId: place.id
+    });
     await refresh();
     setArchiveModal({ place: archive.place, mode: 'detail', archive });
-    setToast('民族志档案已保存');
+    setToast(session ? '民族志档案已保存，等待同步' : '民族志档案已保存到本机');
+    if (session) void synchronize();
   };
 
   const updateArchive = async (archive: EthnographyArchive, input: Omit<EthnographyArchive, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus'>) => {
@@ -959,10 +1117,18 @@ export default function App({ repository: injectedRepository }: { repository?: A
       return;
     }
     const place = await enrichPlaceSnapshot(input.place);
-    const updated = await repository.update(archive.id, { ...input, place, placeId: place.id });
+    const updated = await repository.update(archive.id, {
+      ...input,
+      ownerId: archive.ownerId,
+      visibility: archive.visibility ?? 'private',
+      revision: archive.revision,
+      place,
+      placeId: place.id
+    });
     await refresh();
     setArchiveModal({ place: updated.place, mode: 'detail', archive: updated });
     setToast('民族志档案已更新');
+    if (session) void synchronize();
   };
 
   const removeArchive = async (archive: EthnographyArchive) => {
@@ -971,14 +1137,40 @@ export default function App({ repository: injectedRepository }: { repository?: A
     await repository.remove(archive.id);
     await refresh();
     setArchiveModal({ place: archive.place, mode: 'list' });
+    if (session) void synchronize();
   };
 
-  const exportArchives = useCallback(() => {
-    if (localArchives.length === 0) {
+  const toggleArchiveVisibility = async (archive: EthnographyArchive) => {
+    if (!session || archive.ownerId !== session.user.id) return;
+    const visibility = archive.visibility === 'public' ? 'private' : 'public';
+    const updated = await repository.update(archive.id, { visibility });
+    await refresh();
+    setArchiveModal({ place: updated.place, mode: 'detail', archive: updated });
+    setToast(visibility === 'public' ? '正在发布档案' : '正在转为私人草稿');
+    await synchronize();
+  };
+
+  const signIn = async (email: string, password: string) => {
+    if (!cloudClient) throw new CloudApiError('云端同步尚未配置', 503);
+    await cloudClient.signInWithPassword(email.trim(), password);
+    setToast('登录成功');
+  };
+
+  const signOut = async () => {
+    await cloudClient?.signOut();
+    setToast('已退出云端账号，本机私人缓存已隐藏');
+  };
+
+  const exportArchives = useCallback(async () => {
+    if (visibleLocalArchives.length === 0) {
       setToast('当前没有需要导出的私人档案');
       return;
     }
-    const content = serializeArchiveBackup(localArchives);
+    setToast('正在准备可移植备份');
+    const portableArchives = cloudGateway && session
+      ? await Promise.all(visibleLocalArchives.map(archive => cloudGateway.media.materializeForBackup(archive)))
+      : visibleLocalArchives;
+    const content = serializeArchiveBackup(portableArchives.map(archive => ({ ...archive, syncStatus: 'local' as const })));
     const url = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
@@ -987,8 +1179,29 @@ export default function App({ repository: injectedRepository }: { repository?: A
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    setToast(`已导出 ${localArchives.length} 份私人档案`);
-  }, [localArchives]);
+    setToast(`已导出 ${visibleLocalArchives.length} 份私人档案`);
+  }, [visibleLocalArchives, cloudGateway, session]);
+
+  const claimLocalArchives = async () => {
+    if (!session || !localRepository || legacyArchiveCount === 0) return;
+    try {
+      await exportArchives();
+      const count = await localRepository.claimLocalArchives(session.user.id);
+      await refresh();
+      setToast(`已将 ${count} 份本机档案加入同步队列`);
+      await synchronize();
+    } catch (error) {
+      setToast(error instanceof CloudApiError ? error.message : '本机档案上传准备失败，原数据未改变');
+    }
+  };
+
+  const resolveConflict = async (archiveId: string, resolution: 'local' | 'remote') => {
+    if (!localRepository) return;
+    await localRepository.resolveConflict(archiveId, resolution);
+    await refresh();
+    setToast(resolution === 'local' ? '已选择本机版本，等待重新同步' : '已采用云端版本');
+    if (resolution === 'local') await synchronize();
+  };
 
   const importArchives = async (file: File, mode: 'merge' | 'replace') => {
     if (file.size > MAX_ARCHIVE_IMPORT_BYTES) {
@@ -1001,10 +1214,20 @@ export default function App({ repository: injectedRepository }: { repository?: A
     try {
       const backup = parseArchiveBackup(await file.text());
       const demoIds = new Set(PUBLIC_DEMO_ARCHIVES.map(archive => archive.id));
-      const personalArchives = backup.archives.filter(archive => !isPublicDemoArchive(archive) && !demoIds.has(archive.id));
+      const personalArchives = backup.archives
+        .filter(archive => !isPublicDemoArchive(archive) && !demoIds.has(archive.id))
+        .map(archive => ({
+          ...archive,
+          ownerId: session?.user.id ?? 'local-demo-user',
+          visibility: 'private' as const,
+          revision: 0,
+          serverSequence: undefined,
+          syncStatus: cloudEnabled ? 'pending' as const : 'local' as const
+        }));
       const restoredCount = await repository.restore(personalArchives, mode);
       await refresh();
       setToast(`已${mode === 'merge' ? '合并' : '恢复'} ${restoredCount} 份私人档案`);
+      if (session) void synchronize();
     } catch (error) {
       const message = error instanceof ArchiveBackupError ? error.message : '导入失败，请检查备份文件';
       setToast(message);
@@ -1015,7 +1238,7 @@ export default function App({ repository: injectedRepository }: { repository?: A
 
   const clearArchives = async () => {
     if (localArchives.length === 0) return;
-    if (window.confirm('清空前建议下载一份 JSON 备份。现在下载吗？')) exportArchives();
+    if (window.confirm('清空前建议下载一份 JSON 备份。现在下载吗？')) await exportArchives();
     if (!window.confirm(`确定清空本机保存的 ${localArchives.length} 份私人档案吗？公开演示档案会保留，此操作无法撤销。`)) return;
     await repository.clear();
     await refresh();
@@ -1142,15 +1365,16 @@ export default function App({ repository: injectedRepository }: { repository?: A
       <button className={`top-action-button ${networkOpen || trajectorySteps.length > 0 ? 'is-active' : ''}`} onClick={() => { setNetworkOpen(open => !open); setTimeOpen(false); setThemeOpen(false); }}><Network size={14} />研究网络</button>
       <button className={`top-action-button ${themeOpen || selectedTags.length > 0 ? 'is-active' : ''}`} onClick={() => { setThemeOpen(open => !open); setTimeOpen(false); setNetworkOpen(false); }}><Layers3 size={14} />主题图层</button>
       <button className="garden-button" onClick={() => { setPanelOpen(true); setSearchOpen(false); }} aria-label="打开地点档案"><MapPinned size={14} />地点档案</button>
+      <CloudAccount enabled={cloudEnabled} session={session} state={cloudState} onSignIn={signIn} onSignOut={signOut} onSync={synchronize} />
     </div>
     <SearchPanel open={searchOpen && searchSubmitted} query={searchQuery} results={searchResults} searching={searching} onSelect={selectSearchResult} />
-    <ArchiveIndexPanel open={panelOpen} archives={archives} localArchiveCount={localArchives.length} importing={importingArchives} onClose={() => setPanelOpen(false)} onOpen={openArchive} onExport={exportArchives} onImport={(file, mode) => void importArchives(file, mode)} onClear={() => void clearArchives()} />
+    <ArchiveIndexPanel open={panelOpen} archives={archives} localArchiveCount={visibleLocalArchives.length} importing={importingArchives} cloudEnabled={cloudEnabled} session={session} cloudState={cloudState} legacyCount={legacyArchiveCount} conflicts={visibleConflicts} onClose={() => setPanelOpen(false)} onOpen={openArchive} onExport={() => void exportArchives().catch(error => setToast(error instanceof CloudApiError ? error.message : '备份导出失败'))} onImport={(file, mode) => void importArchives(file, mode)} onClear={() => void clearArchives()} onClaim={() => void claimLocalArchives()} onSync={() => void synchronize()} onResolveConflict={(archiveId, resolution) => void resolveConflict(archiveId, resolution)} />
     <TimeAtlas open={timeOpen} mode={timeMode} year={activeYear} minYear={minYear} maxYear={maxYear} count={displayedArchives.length} playing={timePlaying} onMode={mode => { setTimeMode(mode); setTimeYear(activeYear); setTimePlaying(false); }} onYear={year => { setTimeYear(year); setTimePlaying(false); }} onTogglePlay={() => { if (activeYear >= maxYear) setTimeYear(minYear); setTimePlaying(value => !value); }} onClose={() => { setTimeOpen(false); setTimePlaying(false); }} onClear={() => { setTimeYear(null); setTimePlaying(false); setTimeOpen(false); }} />
     <ResearchNetworkPanel open={networkOpen} archives={archives} onClose={() => setNetworkOpen(false)} onAuthor={author => { setViewMode('map'); setNetworkOpen(false); void showAuthorTrajectory(author); }} onNationality={code => { setViewMode('map'); setNetworkOpen(false); void showNationalityTrajectory(code); }} onClear={() => { setTrajectorySteps([]); setHighlightedPlaces([]); setToast('已清除研究网络'); }} />
     <ThemeLayerPanel open={themeOpen} tags={themeTags} selected={selectedTags} onToggle={key => setSelectedTags(current => current.includes(key) ? current.filter(tag => tag !== key) : [...current, key])} onClear={() => setSelectedTags([])} onClose={() => setThemeOpen(false)} />
     {hoverArchiveLocation && hoverArchives.length > 0 && !modalOpen && <HoverArchiveShelf location={hoverArchiveLocation} archives={hoverArchives} onOpen={archive => { clearHoverShelf(false); openArchive(archive); }} onEnter={keepHoverShelf} onLeave={() => clearHoverShelf()} />}
     <div className={`scrim ${modalOpen ? 'is-visible' : ''}`} onClick={() => setArchiveModal(null)} />
-    <ArchiveModal state={archiveModal} archives={archives} onClose={() => setArchiveModal(null)} onCreate={createArchive} onUpdate={updateArchive} onOpen={openArchive} onMode={setModalMode} onRemove={archive => void removeArchive(archive)} onTrace={author => void showAuthorTrajectory(author)} onError={setToast} />
+    <ArchiveModal state={archiveModal} archives={archives} currentUserId={session?.user.id} cloudEnabled={cloudEnabled} onClose={() => setArchiveModal(null)} onCreate={createArchive} onUpdate={updateArchive} onOpen={openArchive} onMode={setModalMode} onRemove={archive => void removeArchive(archive)} onTrace={author => void showAuthorTrajectory(author)} onVisibility={archive => void toggleArchiveVisibility(archive)} onError={setToast} />
     <div className={`toast ${toast ? 'is-visible' : ''}`} role="status">{toast}</div>
   </main>;
 }

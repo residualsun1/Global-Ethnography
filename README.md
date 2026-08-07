@@ -13,7 +13,8 @@
 - 在 3D 地球与 2D 地图之间切换，浏览国家、省州和地点。
 - 按地点建立民族志档案，记录版本、作者、田野时间、出版信息、标签和 Markdown 阅读札记。
 - 按研究者、国籍、时间和主题查看档案之间的关系。
-- 私人档案保存在当前浏览器的 IndexedDB 中，不会自动上传。
+- 未配置云端时，私人档案只保存在当前浏览器的 IndexedDB 中。
+- 配置 Supabase 后，受邀编辑者可以跨设备同步私人草稿，并显式发布为线上只读档案。
 - 支持 JSON 导出、合并导入、覆盖恢复以及清空前备份提醒。
 - 首次访问会显示一份只读公开演示档案；演示数据与私人档案完全分离。
 
@@ -23,12 +24,13 @@
 | --- | --- |
 | 应用 | React 19、TypeScript、Vite |
 | 地图 | MapLibre GL JS，支持 Globe 与平面投影 |
-| 本地持久化 | Dexie / IndexedDB |
+| 本地持久化 | Dexie / IndexedDB（缓存、离线写入、同步 outbox） |
+| 可选云端 | Supabase Postgres / Auth / Storage，数据库 RLS 授权 |
 | 地理数据 | Natural Earth、本地城市索引、OpenStreetMap / OpenFreeMap |
 | 测试 | Vitest、Playwright |
 | 部署形态 | 无服务器静态站点 |
 
-运行时只有地图样式和瓦片依赖网络。档案数据默认不经过服务器，因此不同设备、浏览器配置或网站域名之间不会自动同步。
+没有配置 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_PUBLISHABLE_KEY` 时，应用保持纯本地模式。配置后，档案先安全写入本机，再通过可重试 outbox 同步；并发修改不会静默覆盖，而会要求用户选择保留本机或云端版本。
 
 ## 本地开发
 
@@ -48,6 +50,8 @@ npm run test:e2e
 npm run check
 ```
 
+`npm run geography:verify` 会校验国家、一级行政区和城市资产的数量与 SHA-256；地理数据只有经过显式更新清单和代码审查后才能进入构建。
+
 端到端测试覆盖 1440×900 桌面视口与 Pixel 7 移动视口，包括地图视图切换、研究工具、演示档案和 JSON 备份恢复流程。
 
 ## 数据与隐私
@@ -57,6 +61,7 @@ npm run check
 - 清除浏览器网站数据、改用其他浏览器配置或改变访问域名，都可能使原有本地档案不可见。
 - 重要档案应定期导出为 JSON，并将备份文件保存在浏览器之外。
 - 本地上传的封面和作者图片会以 Data URL 写入 IndexedDB，建议控制图片体积。
+- 云端启用后，本地图片会上传到私有 Storage bucket；导出 JSON 时会重新嵌入图片，确保备份可移植。
 
 ## 地理数据口径
 
@@ -84,3 +89,5 @@ Node version: 22
 ```
 
 生产环境应保留 `public/_headers` 中的安全响应头，并在获得正式域名后将 Open Graph 图片地址更新为绝对 HTTPS 地址。
+
+云端数据库、首位管理员、环境变量、备份和恢复配置见 [`docs/CLOUD_SYNC.md`](./docs/CLOUD_SYNC.md)。数据库未完成迁移前不要设置生产环境变量。
